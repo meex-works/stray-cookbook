@@ -1,13 +1,41 @@
-# Stray MCP server
+# stray-mcp
 
-The [Stray API](https://stray.fi/docs) as read-only MCP tools, over stdio. Node 18 or later.
+The [Stray API](https://stray.fi/docs) as read-only MCP tools for Claude, Cursor or any MCP client: Hyperliquid
+order-book depth, funding, open interest, trade flow, whale positioning, liquidation levels and The Draw, with the
+same markets on Binance, Bybit and OKX beside it. Runs over stdio on Node 18 or later.
+
+Ask in plain words: "Is BTC's book thinner than usual for this hour?", "Where are the big liquidation levels on
+ETH?", "Compare HYPE depth on Hyperliquid with Binance, Bybit and OKX."
+
+## Setup
+
+Make a key at [stray.fi/console](https://stray.fi/console). Until 31 December 2026, an account that hasn't had a plan
+can start 30 days of Builder free.
+
+**Claude Code**
 
 ```sh
-npm install
-STRAY_API_KEY=stray_... npm test     # starts the server, lists the tools, calls each once (about 18 calls)
+claude mcp add stray -e STRAY_API_KEY=stray_... -- npx -y stray-mcp
 ```
 
-Setup for Claude Code, Claude Desktop and Cursor is in the [main README](../README.md#use-stray-with-ai).
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
+`%APPDATA%\Claude\claude_desktop_config.json` on Windows) and **Cursor** (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "stray": {
+      "command": "npx",
+      "args": ["-y", "stray-mcp"],
+      "env": { "STRAY_API_KEY": "stray_..." }
+    }
+  }
+}
+```
+
+Each tool call is one API call. `STRAY_BASE_URL` overrides `https://stray.fi/v1`.
+
+## Tools
 
 | Tool | Returns |
 |---|---|
@@ -33,4 +61,16 @@ Setup for Claude Code, Claude Desktop and Cursor is in the [main README](../READ
 Time series come back as named rows, newest last, at most 200 (fewer where rows are wide). Ask for a larger `step`
 to cover a longer span. The live stream (`/v1/stream`, Pro) isn't a tool: it's an open connection, not a question.
 
-`STRAY_BASE_URL` overrides `https://stray.fi/v1`.
+Stray describes the past and the present. Nothing it returns is a forecast or financial advice.
+
+## From source
+
+The server lives in the [Stray cookbook](https://github.com/meex-works/stray-cookbook/tree/master/mcp), beside
+quickstarts, worked examples and an OpenAPI spec.
+
+```sh
+git clone https://github.com/meex-works/stray-cookbook && cd stray-cookbook/mcp && npm install
+STRAY_API_KEY=stray_... npm test     # starts the server, lists the tools, calls each once (about 18 calls)
+```
+
+MIT © 2026 SHYGUY LLC

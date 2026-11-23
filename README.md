@@ -37,16 +37,12 @@ The MCP server gives a model the record as tools, so you can ask in plain words:
 - "What's The Draw at, and which component is driving it?"
 - "HYPE funding is low. What happened after past days like this one?"
 
-Set it up:
-
-```sh
-git clone https://github.com/meex-works/stray-cookbook && cd stray-cookbook/mcp && npm install
-```
+It's on npm as [`stray-mcp`](https://www.npmjs.com/package/stray-mcp) (Node 18 or later).
 
 **Claude Code**
 
 ```sh
-claude mcp add stray -e STRAY_API_KEY=stray_... -- node "$PWD/index.js"
+claude mcp add stray -e STRAY_API_KEY=stray_... -- npx -y stray-mcp
 ```
 
 **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
@@ -56,8 +52,8 @@ claude mcp add stray -e STRAY_API_KEY=stray_... -- node "$PWD/index.js"
 {
   "mcpServers": {
     "stray": {
-      "command": "node",
-      "args": ["/absolute/path/to/stray-cookbook/mcp/index.js"],
+      "command": "npx",
+      "args": ["-y", "stray-mcp"],
       "env": { "STRAY_API_KEY": "stray_..." }
     }
   }
@@ -65,7 +61,8 @@ claude mcp add stray -e STRAY_API_KEY=stray_... -- node "$PWD/index.js"
 ```
 
 Each tool call is one API call. The tools trim long series to the newest rows so replies stay small; the
-[tool list](mcp/README.md) says what each returns.
+[tool list](mcp/README.md) says what each returns. To run it from this repo instead:
+`cd mcp && npm install`, then point the client at `node /absolute/path/to/stray-cookbook/mcp/index.js`.
 
 ## Quickstart
 

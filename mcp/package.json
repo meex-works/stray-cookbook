@@ -28,5 +28,18 @@
   "scripts": {
     "start": "node index.js",
     "test": "node test.mjs"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meex-works/stray-cookbook.git",
+    "directory": "mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/meex-works/stray-cookbook/issues"
   }
 }
