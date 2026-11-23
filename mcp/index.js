@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 const BASE = (process.env.STRAY_BASE_URL || "https://stray.fi/v1").replace(/\/+$/, "");
+if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(BASE + "/")) throw new Error("STRAY_BASE_URL must be https:// (or http://localhost for testing).");
 const KEY = process.env.STRAY_API_KEY;
 const CORE = ["BTC", "ETH", "HYPE", "SOL", "XRP", "DOGE", "BNB", "SUI"];
 const HOUR = 3600e3;
@@ -15,7 +16,9 @@ async function get(path, params = {}) {
   if (!KEY) throw new Error("STRAY_API_KEY is not set. Make a key at https://stray.fi/console and add it to this server's env.");
   const url = new URL(BASE + path);
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
-  const res = await fetch(url, { headers: { authorization: `Bearer ${KEY}`, "user-agent": "stray-mcp/0.1" } });
+  const base = new URL(BASE);
+  if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname + "/")) throw new Error("Refused: that request would leave the Stray API.");
+  const res = await fetch(url, { headers: { authorization: `Bearer ${KEY}`, "user-agent": "stray-mcp/0.1.1" } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const wait = res.headers.get("retry-after");
@@ -39,12 +42,14 @@ function series(body, { step, keep = MAX_ROWS } = {}) {
 
 const span = (hours) => { const to = Date.now(); return { from: to - hours * HOUR, to }; };
 const coreCoin = z.enum(CORE).describe("A core market: " + CORE.join(", "));
-const anyCoin = z.string().describe('A core market (e.g. "BTC") or a HIP-3 market by its full name (e.g. "xyz:NVDA"; see stray_markets)');
+// Market names only: letters and digits, optionally "dex:NAME". Anything path-shaped never reaches the URL.
+const anyCoin = z.string().regex(/^[A-Za-z0-9]{1,20}(:[A-Za-z0-9]{1,30})?$/, "a market name like BTC or xyz:NVDA")
+  .describe('A core market (e.g. "BTC") or a HIP-3 market by its full name (e.g. "xyz:NVDA"; see stray_markets)');
 const hours = (def, max) => z.number().min(0.2).max(max).default(def).describe(`How many hours back, up to ${max}. Default ${def}.`);
 const step = (def) => z.number().int().min(1).max(1440).default(def).describe(`Minutes between rows. Default ${def}.`);
 
 const server = new McpServer(
-  { name: "stray", version: "0.1.0" },
+  { name: "stray", version: "0.1.1" },
   {
     instructions:
       "Stray records Hyperliquid perp markets: order-book depth, funding, open interest, flow, whale positioning and liquidation levels, " +

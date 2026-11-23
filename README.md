@@ -37,7 +37,7 @@ The MCP server gives a model the record as tools, so you can ask in plain words:
 - "What's The Draw at, and which component is driving it?"
 - "HYPE funding is low. What happened after past days like this one?"
 
-It's on npm as [`stray-mcp`](https://www.npmjs.com/package/stray-mcp) (Node 18 or later).
+It's on npm as [`stray-mcp`](https://www.npmjs.com/package/stray-mcp) (Node 20 or later).
 
 **Claude Code**
 

@@ -1,6 +1,6 @@
 {
   "name": "stray-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Stray API as MCP tools: Hyperliquid depth, funding, flow, whales, liquidation levels and The Draw",
   "main": "index.js",
   "keywords": [
@@ -15,14 +15,14 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.2",
-    "zod": "^4.6.7"
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
   },
   "bin": {
     "stray-mcp": "index.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "homepage": "https://stray.fi/docs",
   "scripts": {
@@ -32,7 +32,8 @@
   "files": [
     "index.js",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "npm-shrinkwrap.json"
   ],
   "repository": {
     "type": "git",

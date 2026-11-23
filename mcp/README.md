@@ -2,7 +2,7 @@
 
 The [Stray API](https://stray.fi/docs) as read-only MCP tools for Claude, Cursor or any MCP client: Hyperliquid
 order-book depth, funding, open interest, trade flow, whale positioning, liquidation levels and The Draw, with the
-same markets on Binance, Bybit and OKX beside it. Runs over stdio on Node 18 or later.
+same markets on Binance, Bybit and OKX beside it. Runs over stdio on Node 20 or later.
 
 Ask in plain words: "Is BTC's book thinner than usual for this hour?", "Where are the big liquidation levels on
 ETH?", "Compare HYPE depth on Hyperliquid with Binance, Bybit and OKX."

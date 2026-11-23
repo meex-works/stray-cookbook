@@ -1,16 +1,22 @@
 {
-  "name": "mcp",
-  "version": "1.0.0",
+  "name": "stray-mcp",
+  "version": "0.1.1",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
-      "name": "mcp",
-      "version": "1.0.0",
-      "license": "ISC",
+      "name": "stray-mcp",
+      "version": "0.1.1",
+      "license": "MIT",
       "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.32.2",
-        "zod": "^4.6.7"
+        "@modelcontextprotocol/sdk": "1.32.2",
+        "zod": "4.6.7"
+      },
+      "bin": {
+        "stray-mcp": "index.js"
+      },
+      "engines": {
+        "node": ">=20"
       }
     },
     "node_modules/@hono/node-server": {
