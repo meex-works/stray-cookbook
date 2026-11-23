@@ -79,7 +79,8 @@ tool("stray_ranges", "Past ranges", "How far the market moved over past windows 
   "latest window sits. Past ranges, not a forecast.", { coin: coreCoin, window: z.union([1, 3, 7, 14, 30, 60, 90].map((n) => z.literal(n))).default(7).describe("Days: 1, 3, 7, 14, 30, 60 or 90. Default 7.") },
   ({ coin, window }) => get(`/ranges/${coin}`, { window }));
 
-tool("stray_depth", "Order-book depth", "US dollars resting on each side of the live Hyperliquid book within ±0.5%, ±1% and ±2% of mid. Updated every 5 seconds.",
+tool("stray_depth", "Order-book depth", "US dollars resting on each side of the live Hyperliquid book within ±0.5%, ±1% and ±2% of mid. Updated every 5 seconds. " +
+  "To say whether that is thin or deep for the time of day, compare the ±1% total with stray_profile for the current UTC hour.",
   { coin: anyCoin }, ({ coin }) => get(`/depth/${coin}`));
 
 tool("stray_funding", "Funding", "Funding on Hyperliquid (hourly, since listing), Binance or Bybit (every 8 hours). The summary ranks the latest rate " +
@@ -96,8 +97,9 @@ tool("stray_crowding", "Crowding", "Hyperliquid open interest in USD divided by 
   "The latest reading's percentile ranks it against the window.", { coin: coreCoin, hours: hours(168, 168) },
   async ({ coin, hours: h }) => series(await get(`/crowding/${coin}`, span(h)), { step: 60, keep: 24 }));
 
-tool("stray_profile", "The typical day", "Median depth within ±1%, spread and Hyperliquid volume per 10 minutes for each hour of the day (UTC), over the " +
-  "last N days. Shows when books thin out.", { coin: coreCoin, days: z.number().int().min(1).max(30).default(7) },
+tool("stray_profile", "The typical day", "What is usual for each hour of the day (UTC): median depth within ±1% (both sides, USD), spread and " +
+  "Hyperliquid volume per 10 minutes, over the last N days. Use it as the baseline for 'is the book thin right now' and 'when do books thin out'.",
+  { coin: coreCoin, days: z.number().int().min(1).max(30).default(7) },
   ({ coin, days }) => get(`/profile/${coin}`, { days }));
 
 tool("stray_venues", "Hyperliquid vs Binance, Bybit, OKX", "The same market on four venues side by side: USD within ±0.05% to ±2% of each venue's mid, " +
