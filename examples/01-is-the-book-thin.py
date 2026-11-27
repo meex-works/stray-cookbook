@@ -25,4 +25,4 @@ for coin in coins:
     print(f"{coin:6}{usd(total):>10}{usd(typical):>10}{change:>12}{crowd['percentile']:>14}")
 
 print("\nCrowding percentile: where open interest per dollar of book sits in the last 7 days (100 = most crowded).")
-print("A thin book and a high crowding percentile together mean positions can move price further than usual.")
+print("A high percentile means more dollars of open positions per dollar resting near the price than usual this week.")

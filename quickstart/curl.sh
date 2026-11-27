@@ -13,7 +13,7 @@ echo "BTC book within 1% of mid:"
 stray depth/BTC | jq -r '.usd_within["1%"] | "  bids $\(.bids)  asks $\(.asks)"'
 
 echo "HYPE funding, latest hour against all history:"
-stray funding/HYPE | jq -r '.summary | "  \(.latest_annualized * 100 | floor)% a year, percentile \(.latest_percentile)"'
+stray funding/HYPE | jq -r '.summary | "  \(.latest_annualized * 10000 | round / 100)% a year, percentile \(.latest_percentile)"'
 
 echo "Your quota:"
 curl -fsS -o /dev/null -D - "https://stray.fi/v1/markets" -H "Authorization: Bearer $STRAY_API_KEY" \

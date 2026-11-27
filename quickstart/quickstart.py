@@ -25,11 +25,11 @@ def stray(path, **params):
 draw = stray("draw")
 print(f"The Draw: {draw['draw']} ({draw['band']})")
 for coin, m in draw["markets"].items():
-    print(f"  {coin:<5} {m['draw']:>5}  {m['band']}")
+    print(f"  {coin:<5} {m['draw']:>5}  {m['band']}" if m else f"  {coin:<5}     -  no reading in the last 30 minutes")
 
 depth = stray("depth/BTC")["usd_within"]["1%"]
 print(f"BTC within 1% of mid: ${depth['bids']:,.0f} bids, ${depth['asks']:,.0f} asks")
 
 r = stray("ranges/HYPE", window=7)
-print(f"HYPE over 7 days: {r['latest']:+.1%}, percentile {r['latest_percentile']} of {r['samples']} past weeks "
+print(f"HYPE over 7 days: {r['latest']:+.1%}, percentile {r['latest_percentile']} of {r['samples']} past 7-day windows (overlapping) "
       f"(p10 {r['p10']:+.1%}, p90 {r['p90']:+.1%})")

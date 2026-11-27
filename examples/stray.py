@@ -29,11 +29,19 @@ def get(path, **params):
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            body = json.loads(e.read() or b"{}")
-            if attempt == 1 and e.code in (429, 502):
+            try:
+                body = json.loads(e.read() or b"{}")
+            except ValueError:                      # an HTML error page from a proxy or the edge
+                body = {}
+            if attempt == 1 and e.code in (429, 502, 503, 504):
                 time.sleep(min(30, int(e.headers.get("Retry-After") or 2)))
                 continue
             raise StrayError(f"{e.code}: {body.get('error', e.reason)}") from None
+        except (urllib.error.URLError, TimeoutError, ValueError) as e:   # network drop, timeout, a body that isn't JSON
+            if attempt == 1:
+                time.sleep(2)
+                continue
+            raise StrayError(f"Couldn't reach the Stray API: {e}") from None
 
 
 def rows(body):
