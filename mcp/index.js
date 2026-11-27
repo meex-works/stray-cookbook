@@ -255,7 +255,7 @@ tool("stray_whales", "Whale positioning", "Open perp positions of the top 1,500 
   { coin: coreCoin, hours: hours(168, 24 * 31), step: step(60), end: endArg }, "Hyperliquid's largest accounts, from Stray's 10-minute sweep",
   async ({ coin, hours: h, step: s, end }, api) => {
     const sp = span(h, end);
-    const out = checkEmpty(series(await api.get(`/whales/${coin}`, { ...sp, step: Math.max(10, s) }), { keep: 48 }), sp);
+    const out = checkEmpty(series(await api.get(`/whales/${coin}`, { ...sp, step: Math.max(10, s) }), { keep: 24 }), sp);
     const all = out.all ?? [];
     const read = (o) => ({ time: iso(o.t), long_share: round(o.long_usd / (o.long_usd + o.short_usd)), net_usd: o.net_usd, gross_usd: o.long_usd + o.short_usd });
     const last = all[all.length - 1];
