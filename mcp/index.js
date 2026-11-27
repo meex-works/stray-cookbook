@@ -11,6 +11,8 @@ const VERSION = JSON.parse(readFileSync(new URL("./package.json", import.meta.ur
 const BASE = (process.env.STRAY_BASE_URL || "https://stray.fi/v1").replace(/\/+$/, "");
 if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(BASE + "/")) throw new Error("STRAY_BASE_URL must be https:// (or http://localhost for testing).");
 const KEY = process.env.STRAY_API_KEY;
+const KEY_BAD = KEY && /[\s\x00-\x1f\x7f]/.test(KEY);
+const scrub = (msg) => (KEY ? String(msg).split(KEY).join("[key]") : String(msg));
 const CORE = ["BTC", "ETH", "HYPE", "SOL", "XRP", "DOGE", "BNB", "SUI"];
 const HOUR = 3600e3;
 const MAX_ROWS = 200;
@@ -25,6 +27,7 @@ function client() {
   const api = { calls: 0 };
   api.get = async (path, params = {}) => {
     if (!KEY) throw new Error("STRAY_API_KEY is not set. Make a key at https://stray.fi/console and add it to this server's env.");
+    if (KEY_BAD) throw new Error("STRAY_API_KEY contains a space or line break. Copy it again from https://stray.fi/console.");
     const url = new URL(BASE + path);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
     const base = new URL(BASE);
@@ -33,12 +36,16 @@ function client() {
     if (hit && Date.now() - hit.at < 60e3) return hit.body;
     api.calls++;
     const res = await fetch(url, { headers: { authorization: `Bearer ${KEY}`, "user-agent": `stray-mcp/${VERSION}` } });
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch(() => null);
+    if (res.ok && (body === null || typeof body !== "object")) throw new Error("The Stray API answered with something that isn't JSON (a proxy or captive portal?). Nothing was read.");
     if (!res.ok) {
       const wait = res.headers.get("retry-after");
-      throw new Error(`Stray API ${res.status}: ${body.error || res.statusText}${wait ? ` Retry after ${wait} s.` : ""}`);
+      throw new Error(`Stray API ${res.status}: ${body?.error || res.statusText}${wait ? ` Retry after ${wait} s.` : ""}`);
     }
-    if (CACHED.test(path)) CACHE.set(url.href, { at: Date.now(), body });
+    if (CACHED.test(path)) {
+      for (const [k, v] of CACHE) if (Date.now() - v.at >= 60e3) CACHE.delete(k);   // keep only what can still be served
+      CACHE.set(url.href, { at: Date.now(), body });
+    }
     return body;
   };
   return api;
@@ -60,7 +67,7 @@ function series(body, { step, keep = MAX_ROWS } = {}) {
     objs = objs.filter((o) => { const b = Math.floor(o.t / (step * 60e3)); if (seen.has(b)) return false; seen.add(b); return true; });
   }
   const shown = objs.slice(-keep).map((o) => ({ ...o, time: iso(o.t) }));
-  const out = { ...rest, rows: shown, rows_total: objs.length, ...(objs.length > shown.length ? { rows_note: `Showing the newest ${shown.length}. Use a larger step for a longer span.` } : {}) };
+  const out = { ...rest, rows: shown, rows_total: objs.length, ...(objs.length > shown.length ? { rows_note: `Showing the newest ${shown.length} of ${objs.length}. Narrow the window, or use a larger step where the tool has one.` } : {}) };
   Object.defineProperty(out, "all", { value: objs, enumerable: false });
   return out;
 }
@@ -89,8 +96,9 @@ function checkEmpty(out, sp) {
 
 const coreCoin = z.enum(CORE).describe("A core market: " + CORE.join(", "));
 // Market names only: letters and digits, optionally "dex:NAME". Anything path-shaped never reaches the URL.
-const anyCoin = z.string().regex(/^[A-Za-z0-9]{1,20}(:[A-Za-z0-9]{1,30})?$/, "a market name like BTC or xyz:NVDA")
+const anyCoin = z.string().regex(/^([A-Za-z0-9]{1,20}|[A-Za-z0-9]{1,12}:[A-Za-z0-9]{1,20})$/, "a market name like BTC or xyz:NVDA")
   .describe('A core market (e.g. "BTC") or a HIP-3 market by its full name (e.g. "xyz:NVDA"; see stray_markets)');
+const market = (c) => (c.includes(":") ? c.replace(/^[^:]+/, (d) => d.toLowerCase()) : CORE.includes(c.toUpperCase()) ? c.toUpperCase() : c);
 const hours = (def, max) => z.number().min(0.2).max(max).default(def).describe(`How many hours back, up to ${max}. Default ${def}.`);
 const step = (def) => z.number().int().min(1).max(1440).default(def).describe(`Minutes between rows. Default ${def}.`);
 
@@ -107,7 +115,8 @@ const server = new McpServer(
       "Every result starts with as_of and source: give the time of every number you quote and what it is compared with. " +
       "Fractions are decimals (-0.1379 = -13.79%); times are UTC; USD values are US dollars. " +
       "Everything describes the past or the present. Nothing here is a forecast or advice: if asked what a price will do, " +
-      "say Stray records what markets have done and give the current readings. " +
+      "say Stray records what markets have done and give the current readings. Report readings and their comparisons; don't argue what they " +
+      "imply for price, which way a squeeze or flush would go, or what would have to change for one. " +
       "Most tools cost one call from the user's monthly quota; the composed tools say how many they make.",
   },
 );
@@ -128,7 +137,10 @@ function tool(name, title, description, inputSchema, source, run) {
       const out = envelope(await run(args, api), source);
       if (api.calls > 1) out.api_calls = api.calls;
       return { content: [{ type: "text", text: JSON.stringify(out) }] };
-    } catch (e) { return { content: [{ type: "text", text: e.message }], isError: true }; }
+    } catch (e) {
+      const spent = api.calls ? ` (${api.calls} API call${api.calls > 1 ? "s" : ""} used)` : "";
+      return { content: [{ type: "text", text: scrub(e.message) + spent }], isError: true };
+    }
   });
 }
 
@@ -141,13 +153,19 @@ tool("stray_draw", "The Draw", "The Draw: how tense a market is against its own 
   "(Sheathed, Resting, Hand on hilt, Drawing, Drawn). Without a coin: the whole market, each core market's reading and their weights. " +
   "With a coin: the seven components (vol, thin, crowding, funding, liquidation, positioning, flow) and the inputs behind them. " +
   "Start here for 'what is stretched on this market'. Components are measured conditions, each ranked against its own history, " +
-  "not a call on what comes next. Updated every 10 minutes; with `end`, the reading as of that time.",
+  "not a call on what comes next. Updated every 10 minutes. With `end`, the reading nearest before that time (as_of says when; keep hours at 24 " +
+  "or less for one within 10 minutes); without a coin, the per-market readings are today's only, so they are left out of a past reading.",
   { coin: coreCoin.optional().describe("A core market. Leave out for the whole market."), hours: hours(24, 24 * 30), end: endArg },
   "Stray's Draw, computed every 10 minutes from the record",
   async ({ coin, hours: h, end }, api) => {
     const sp = span(h, end);
-    const b = await api.get(coin ? `/draw/${coin}` : "/draw", { ...sp, step: h > 72 ? 1440 : 60 });
-    const { history, history_step_min, ...rest } = b;
+    const st = end ? (h <= 24 ? 10 : h <= 72 ? 60 : 1440) : (h > 72 ? 1440 : 60);
+    const b = await api.get(coin ? `/draw/${coin}` : "/draw", { ...sp, step: st });
+    let { history, history_step_min, markets, ...rest } = b;
+    const past = end && Date.now() - sp.to > 30 * 60e3;
+    if (!past && markets) rest.markets = markets;
+    if (past && !coin) rest.markets_note = "Per-market readings exist for now only; ask stray_draw with each coin and the same end for the past.";
+    if (end && Number.isFinite(rest.t) && sp.to - rest.t > 15 * 60e3) rest.reading_note = `The reading is from ${iso(rest.t)}, the first row of the last ${st}-minute step before end.`;
     return { ...rest, window: windowOf(sp), history: series({ fields: ["t", "draw"], rows: history }).rows.map(({ time, draw }) => ({ time, draw })), history_step_min };
   });
 
@@ -160,7 +178,7 @@ tool("stray_depth", "Order-book depth", "US dollars resting on each side of the 
   "Answers 'how deep is the book'. For 'is that thin for the hour' or 'can it take $X', use stray_book_check.",
   { coin: anyCoin },
   (r) => (r.source === "live" ? "Hyperliquid live book" : "Stray's record, last minute (the live book did not answer)"),
-  async ({ coin }, api) => { const b = await api.get(`/depth/${coin}`); return b.source === "live" ? b : { ...b, stale: true }; });
+  async ({ coin }, api) => { const b = await api.get(`/depth/${market(coin)}`); return b.source === "live" ? b : { ...b, stale: true }; });
 
 tool("stray_funding", "Funding", "Funding on Hyperliquid (hourly, since listing), Binance or Bybit (every 8 hours). The summary ranks the latest rate " +
   "against all history, gives the annualized rate, who pays whom, what it costs per $10,000 of position per day, the sum over the window, " +
@@ -171,26 +189,28 @@ tool("stray_funding", "Funding", "Funding on Hyperliquid (hourly, since listing)
     const sp = span(h, end);
     const s = series(await api.get(`/funding/${coin}`, { venue, ...sp }), { keep: 48 });
     const per = s.interval_hours ?? 1;                       // rows are per settlement period; the summary is hourly
-    const rates = s.all.map((o) => o.rate).filter(Number.isFinite);
+    const rated = s.all.filter((o) => Number.isFinite(o.rate ?? o.rate_per_8h));
+    const rates = rated.map((o) => o.rate ?? o.rate_per_8h);
     let same = 0;
     for (let i = rates.length - 1; i >= 0 && Math.sign(rates[i]) === Math.sign(rates[rates.length - 1]); i--) same++;
-    const latest = s.summary?.latest_hourly;
+    const lastHourly = rates.length ? rates[rates.length - 1] / per : null;   // the window's last settlement, on the hourly scale
     const summary = {
       ...s.summary,
-      longs_pay_shorts: Number.isFinite(latest) ? latest > 0 : null,
-      cost_per_10k_usd_per_day: Number.isFinite(latest) ? round(latest * 24 * 1e4, 2) : null,
+      window_last: rated.length ? { time: iso(rated[rated.length - 1].t), hourly: sig(lastHourly) } : null,
+      longs_pay_shorts: lastHourly === null ? null : lastHourly > 0,
+      cost_per_10k_usd_per_day: lastHourly === null ? null : round(lastHourly * 24 * 1e4, 2),
       settled_sum_window: round(sum(rates), 8),
       hours_same_sign: rates.length ? same * per : null,
       ...(rates.length && same === rates.length ? { hours_same_sign_note: "Every row in the window has this sign; it may run longer. Widen hours to see." } : {}),
-      ...(end ? { summary_note: "latest_* and the percentile describe the most recent settlement, not the end of this window; the rows and settled_sum_window follow the window." } : {}),
+      ...(end ? { summary_note: "latest_* and the percentile describe the most recent settlement, not this window. window_last, longs_pay_shorts, cost_per_10k_usd_per_day, settled_sum_window and hours_same_sign all follow the window." } : {}),
     };
     return { ...checkEmpty(s, sp), venue, window: windowOf(sp), summary };
   });
 
 tool("stray_conditional", "When funding was like today", "Every day since 2023 is put into one of ten bands by its average hourly funding. Returns " +
-  "today's band and the spread of moves over the next N days after past days in that band, beside all days. Past, not a forecast. " +
+  "today's band and the spread of moves over the N days that followed past days in that band, beside all days. Past, not a forecast. " +
   "Shows the spread of what followed, beside all days; if the two spreads look alike, say so.",
-  { coin: coreCoin, horizon: z.union([1, 3, 7, 14, 30].map((n) => z.literal(n))).default(7).describe("Days ahead: 1, 3, 7, 14 or 30. Default 7.") },
+  { coin: coreCoin, horizon: z.union([1, 3, 7, 14, 30].map((n) => z.literal(n))).default(7).describe("Days after each past day: 1, 3, 7, 14 or 30. Default 7.") },
   "Hyperliquid daily funding and closes since 2023", ({ coin, horizon }, api) => api.get(`/conditional/${coin}`, { horizon }));
 
 tool("stray_crowding", "Crowding", "Hyperliquid open interest in USD divided by USD resting within ±1% of mid: dollars of positions per dollar of book. " +
@@ -198,8 +218,9 @@ tool("stray_crowding", "Crowding", "Hyperliquid open interest in USD divided by 
   "Hyperliquid open interest and live book, from Stray's record",
   async ({ coin, hours: h, end }, api) => {
     const sp = span(h, end);
-    const s = checkEmpty(series(await api.get(`/crowding/${coin}`, sp), { step: 60, keep: 24 }), sp);
-    return { ...s, window: windowOf(sp), norm: { what: "this window's readings", period_hours: h, samples: s.rows_total } };
+    const b = await api.get(`/crowding/${coin}`, sp);
+    const s = checkEmpty(series(b, { step: 60, keep: 24 }), sp);
+    return { ...s, window: windowOf(sp), norm: { what: "every 10-minute reading in this window", period_hours: h, samples: (b.rows ?? []).length } };
   });
 
 tool("stray_profile", "The typical day", "What is usual for each hour of the day (UTC): median depth within ±1% (both sides, USD), spread and " +
@@ -246,8 +267,8 @@ tool("stray_flow", "Trade flow", "Hyperliquid volume by aggressor side in USD, n
   });
 
 tool("stray_positioning", "Binance positioning", "Binance's open interest, share of accounts long, top traders' long share and taker buy/sell volume, " +
-  "every 5 minutes (shown hourly).", { coin: coreCoin, hours: hours(24, 24 * 31), end: endArg }, "Binance futures data",
-  async ({ coin, hours: h, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/positioning/${coin}`, sp), { step: 60 }), sp), window: windowOf(sp) }; });
+  "every 5 minutes (shown hourly by default).", { coin: coreCoin, hours: hours(24, 24 * 31), step: step(60), end: endArg }, "Binance futures data",
+  async ({ coin, hours: h, step: s, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/positioning/${coin}`, sp), { step: s }), sp), window: windowOf(sp) }; });
 
 tool("stray_whales", "Whale positioning", "Open perp positions of the top 1,500 Hyperliquid accounts by account value, totalled per coin: long, short and " +
   "net USD, accounts on each side, size-weighted leverage, and HLP's net position. Totals only; no wallets. The summary gives the long share, " +
@@ -283,7 +304,7 @@ tool("stray_liqmap", "Liquidation map", "Where the top Hyperliquid accounts' pos
   });
 
 tool("stray_implied", "Implied vs realized volatility", "Deribit's implied volatility index beside realized volatility from Hyperliquid daily closes, " +
-  "the one-sigma moves each implies over 1, 7 and 30 days, and where implied ranks against every day since 2021.", { coin: z.enum(["BTC", "ETH"]) },
+  "the size of a one-standard-deviation move each figure corresponds to over 1, 7 and 30 days (a measure of size, not a call), and where implied ranks against every day since 2021.", { coin: z.enum(["BTC", "ETH"]) },
   "Deribit volatility index; Hyperliquid daily closes",
   async ({ coin }, api) => series(await api.get(`/implied/${coin}`), { keep: 7 }));
 
@@ -295,13 +316,13 @@ tool("stray_correlation", "Correlation", "Correlation of daily returns between t
   { window: z.union([30, 90, 180].map((n) => z.literal(n))).default(30) }, "Hyperliquid daily closes", ({ window }, api) => api.get("/correlation", { window }));
 
 tool("stray_liquidity", "Top of book", "Ten-minute medians of the top of the Hyperliquid book: spread in basis points and USD in the top 5 and top 20 levels " +
-  "on each side.", { coin: coreCoin, hours: hours(24, 24 * 366), end: endArg }, "Hyperliquid book, ten-minute medians",
-  async ({ coin, hours: h, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/liquidity/${coin}`, sp), { step: 60 }), sp), window: windowOf(sp) }; });
+  "on each side.", { coin: coreCoin, hours: hours(24, 24 * 366), step: step(60), end: endArg }, "Hyperliquid book, ten-minute medians",
+  async ({ coin, hours: h, step: s, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/liquidity/${coin}`, sp), { step: s }), sp), window: windowOf(sp) }; });
 
 tool("stray_history", "Stray's record", "Stray's own minute-by-minute record of a market: mark, oracle, hourly funding, open interest in coins, and USD " +
   "resting within ±0.05% to ±2% of mid on each side. With `end`, any past window since recording began.", { coin: anyCoin, hours: hours(24, 168), step: step(60), end: endArg },
   "Stray's minute record of Hyperliquid",
-  async ({ coin, hours: h, step: s, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/history/${coin}`, { ...sp, step: s })), sp), window: windowOf(sp) }; });
+  async ({ coin, hours: h, step: s, end }, api) => { const sp = span(h, end); return { ...checkEmpty(series(await api.get(`/history/${market(coin)}`, { ...sp, step: s })), sp), window: windowOf(sp) }; });
 
 // ── composed tools: the comparison already made ─────────────────────────────────────────────────────────────────
 
@@ -323,13 +344,13 @@ tool("stray_book_check", "Book check: the exit, the size, the hour",
   { coin: anyCoin, usd: z.number().positive().max(1e10).optional().describe("A position size in US dollars to check against the book."),
     side: z.enum(["both", "sell", "buy"]).default("both").describe("Which side of the size to check: sell (into bids), buy (into asks) or both.") },
   "Hyperliquid live book; Stray's record",
-  async ({ coin, usd, side }, api) => {
-    const core = CORE.includes(coin);
-    const [depth, profile, crowd, liq, hist] = await Promise.all([
+  async ({ coin: raw, usd, side }, api) => {
+    const coin = market(raw), core = CORE.includes(coin);
+    const [depth, profile, crowdR, liqR, hist] = await Promise.all([
       api.get(`/depth/${coin}`),
       core ? api.get(`/profile/${coin}`, { days: 14 }) : null,
-      core ? api.get(`/crowding/${coin}`, span(168)) : null,
-      core ? api.get(`/liqmap/${coin}`) : null,
+      core ? api.get(`/crowding/${coin}`, span(168)).then((v) => ({ v }), (e) => ({ e })) : null,   // optional: a miss is reported, not fatal
+      core ? api.get(`/liqmap/${coin}`).then((v) => ({ v }), (e) => ({ e })) : null,
       core ? null : api.get(`/history/${coin}`, { ...span(168), step: 60 }),
     ]);
     const w = depth.usd_within ?? {};
@@ -338,9 +359,9 @@ tool("stray_book_check", "Book check: the exit, the size, the hour",
     let usual;
     if (core) {
       const row = (profile.hours_utc ?? []).find((r) => r.hour === hour);
-      usual = { hour_utc: hour, median_usd_within_1pct: row?.depth_1pct_usd ?? null, samples: row?.n ?? 0, period_days: 14, source: "Stray's record, median by UTC hour" };
+      usual = { hour_utc: hour, median_usd_within_1pct: row?.depth_1pct_usd ?? null, period_days: 14, source: "Stray's record, median by UTC hour" };
     } else {
-      const rows = series(hist).all.filter((o) => new Date(o.t).getUTCHours() === hour).map((o) => o.bid_1 + o.ask_1);
+      const rows = series(hist).all.filter((o) => new Date(o.t).getUTCHours() === hour && Number.isFinite(o.bid_1) && Number.isFinite(o.ask_1)).map((o) => o.bid_1 + o.ask_1);
       usual = { hour_utc: hour, median_usd_within_1pct: median(rows), samples: rows.length, period_days: 7, source: "Stray's record, one reading per hour" };
     }
     usual.vs_norm = Number.isFinite(now1) && usual.median_usd_within_1pct ? round(now1 / usual.median_usd_within_1pct, 3) : null;
@@ -354,9 +375,14 @@ tool("stray_book_check", "Book check: the exit, the size, the hour",
       if (side !== "buy") out.size.sell = { against: "bids", ...tightest("bids", w, usd) };
       if (side !== "sell") out.size.buy = { against: "asks", ...tightest("asks", w, usd) };
     }
-    if (core) {
+    const crowd = crowdR?.v, liq = liqR?.v;
+    if (crowdR?.e) out.positions_per_book_dollar = { error: scrub(crowdR.e.message) };
+    if (liqR?.e) out.liquidations_within_5pct = { error: scrub(liqR.e.message) };
+    if (crowd) {
       out.positions_per_book_dollar = { value: crowd.latest?.ratio ?? null, percentile: crowd.latest?.percentile ?? null, period_days: 7, as_of: iso(crowd.latest?.t),
         source: "Hyperliquid open interest over USD within ±1%" };
+    }
+    if (liq) {
       const band = (list, a, b) => (list ?? []).find((x) => {
         const lo = Math.min(Math.abs(x.from_pct), Math.abs(x.to_pct)), hi = Math.max(Math.abs(x.from_pct), Math.abs(x.to_pct));
         return lo === a && hi === b;
@@ -368,7 +394,8 @@ tool("stray_book_check", "Book check: the exit, the size, the hour",
         book_within_2pct_usd: { bids: w["2%"]?.bids ?? null, asks: w["2%"]?.asks ?? null },
         note: "Levels below the mark are longs' (forced sells into bids); above are shorts' (forced buys into asks). The book is only measured to ±2%.",
       };
-    } else {
+    }
+    if (!core) {
       out.omitted = "Crowding and liquidation levels are recorded for core markets only.";
     }
     return { as_of: depth.as_of, ...out };
@@ -380,20 +407,25 @@ tool("stray_unusual", "Is this move unusual?",
   "and implied's percentile since 2021. Makes one API call per window, plus one for BTC or ETH.",
   { coin: coreCoin, windows: z.array(z.union([1, 3, 7, 14, 30, 60, 90].map((n) => z.literal(n)))).min(1).max(3).default([1, 7, 30])
       .describe("Window lengths in days (1, 3, 7, 14, 30, 60 or 90), up to three. Default [1, 7, 30].") },
-  "Hyperliquid daily closes",
+  "Hyperliquid closes",
   async ({ coin, windows }, api) => {
     const ws = [...new Set(windows)];
-    const [ranges, implied] = await Promise.all([
-      Promise.all(ws.map((window) => api.get(`/ranges/${coin}`, { window }))),
-      coin === "BTC" || coin === "ETH" ? api.get(`/implied/${coin}`) : null,
+    const settle = (p) => p.then((v) => ({ v }), (e) => ({ e }));             // one failed read doesn't sink the others
+    const [got, impliedR] = await Promise.all([
+      Promise.all(ws.map((window) => settle(api.get(`/ranges/${coin}`, { window })))),
+      coin === "BTC" || coin === "ETH" ? settle(api.get(`/implied/${coin}`)) : null,
     ]);
+    if (got.every((g) => g.e)) throw got[0].e;
+    const ranges = got.filter((g) => g.v).map((g) => g.v), implied = impliedR?.v;
     const out = {
       coin,
       windows: ranges.map((r) => ({ window_days: r.window_days, latest_move: r.latest, latest_percentile: r.latest_percentile,
         p10: r.p10, p25: r.p25, p50: r.p50, p75: r.p75, p90: r.p90, samples: r.samples,
-        inside_p10_p90: Number.isFinite(r.latest) ? r.latest >= r.p10 && r.latest <= r.p90 : null, as_of: r.as_of })),
-      norm: { what: "every past window of the same length in Hyperliquid's daily closes", samples: Math.min(...ranges.map((r) => r.samples ?? 0)) },
+        inside_p10_p90: Number.isFinite(r.latest_percentile) ? r.latest_percentile >= 10 && r.latest_percentile <= 90 : null, source: r.source, as_of: r.as_of }))
+        .concat(got.map((g, i) => (g.e ? { window_days: ws[i], error: scrub(g.e.message) } : null)).filter(Boolean)),
+      norm: { what: "every past window of the same length (overlapping windows; 1- and 3-day from 4-hour closes, longer from daily closes)", samples: Math.min(...ranges.map((r) => r.samples ?? 0)) },
     };
+    if (impliedR?.e) out.volatility = { error: scrub(impliedR.e.message) };
     if (implied?.summary) {
       const s = implied.summary;
       out.volatility = { implied_annual_pct: s.implied_annual_pct, implied_percentile: s.implied_percentile, implied_since: s.implied_since,
@@ -407,8 +439,8 @@ tool("stray_oi_change", "Open interest and price changes",
   "don't count as new positions) over 1 hour, 4 hours, 24 hours and 7 days, from Stray's minute record, plus the latest hourly funding. " +
   "Changes are fractions (0.012 = 1.2%). Works for core and HIP-3 markets.",
   { coin: anyCoin, end: endArg }, "Stray's minute record of Hyperliquid",
-  async ({ coin, end }, api) => {
-    const sp = span(168, end);
+  async ({ coin: raw, end }, api) => {
+    const coin = market(raw), sp = span(168, end);
     const rows = series(await api.get(`/history/${coin}`, { ...sp, step: 60 })).all.filter((o) => Number.isFinite(o.mark) && Number.isFinite(o.oi));
     if (!rows.length) throw new Error("No record for that market in that window.");
     const last = rows[rows.length - 1];
@@ -439,7 +471,8 @@ tool("stray_funding_venues", "Funding across venues",
     const venues = {};
     for (const v of ["hyperliquid", "binance", "bybit", "okx"]) {
       const f = hourly(last, v);
-      const entry = { funding_hourly: sig(f), funding_annualized: f === null ? null : round(f * 24 * 365), settles_every_hours: interval[v] };
+      const entry = { funding_hourly: sig(f), funding_annualized: f === null ? null : round(f * 24 * 365), settles_every_hours: interval[v],
+        ...(v === "okx" ? { interval_note: "assumed 8 hours (OKX's interval isn't in the record)" } : v !== "hyperliquid" ? { interval_note: pred[v === "binance" ? "BinPerp" : "BybitPerp"] ? "as Hyperliquid publishes it" : "assumed 8 hours" } : {}) };
       if (v !== "hyperliquid") {
         const gap = (row) => { const a = hourly(row, v), b = hourly(row, "hyperliquid"); return a === null || b === null ? null : a - b; };
         const g = gap(last);
@@ -462,13 +495,15 @@ tool("stray_brief", "The market in one read",
   "Stray's Draw, computed every 10 minutes from the record",
   async ({ top }, api) => {
     const m = await api.get("/draw", { ...span(24), step: 60 });
-    const ranked = Object.entries(m.markets ?? {}).map(([coin, r]) => ({ coin, draw: r.draw, band: r.band, weight: m.weights?.[coin] ?? null }))
+    const entries = Object.entries(m.markets ?? {});
+    const ranked = entries.filter(([, r]) => r && Number.isFinite(r.draw)).map(([coin, r]) => ({ coin, draw: r.draw, band: r.band, weight: m.weights?.[coin] ?? null }))
       .sort((a, b) => b.draw - a.draw);
+    const missing = entries.filter(([, r]) => !r || !Number.isFinite(r.draw)).map(([coin]) => coin);
     const parts = await Promise.all(ranked.slice(0, top).map((r) => api.get(`/draw/${r.coin}`, { ...span(1), step: 60 })));
     const first = m.history?.[0]?.[1], latest = m.draw;
     return {
       as_of: iso(m.t), market: { draw: m.draw, band: m.band, draw_24h_ago: first ?? null, change_24h: Number.isFinite(first) ? round(latest - first, 1) : null },
-      ranked,
+      ranked, ...(missing.length ? { missing, missing_note: "No Draw reading in the last 30 minutes for these." } : {}),
       breakdown: parts.map((p) => ({ coin: p.coin, draw: p.draw, band: p.band, components: p.components, inputs: p.inputs, as_of: iso(p.t) })),
       bands: m.bands, method: m.method,
     };
@@ -499,7 +534,7 @@ prompt("venues", "Hyperliquid against the other venues", "Depth and funding on H
   ({ coin }) => `How does ${coin} on Hyperliquid compare with Binance, Bybit and OKX right now? Use stray_venues for depth and stray_funding_venues for funding.`);
 prompt("replay", "What did the book do?", "A past window from the record: the book, trade flow and top of book.",
   { coin: coinArg, from: z.string().describe("Start, ISO 8601 UTC"), to: z.string().describe("End, ISO 8601 UTC") },
-  ({ coin, from, to }) => `What did ${coin}'s book do between ${from} and ${to}? Use stray_history, stray_flow and stray_liquidity with end set to ${to} ` +
-    `and hours covering the window from ${from}.`);
+  ({ coin, from, to }) => `What did ${coin}'s book do between ${from} and ${to}? Use stray_history, stray_flow and stray_liquidity with end set to ${to}, ` +
+    `hours covering the window from ${from}, and step 10 for a window of a few hours.`);
 
 await server.connect(new StdioServerTransport());

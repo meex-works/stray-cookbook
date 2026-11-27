@@ -20,17 +20,19 @@ function api(path, q) {
     case "depth": return { coin, as_of: new Date(NOW).toISOString(), mid: 100, usd_within: book, source: coin === "xyz:OLD" ? "record" : "live" };
     case "profile": return { coin, days: +q.get("days"), hours_utc: Array.from({ length: 24 }, (_, h) => ({ hour: h, n: 100, depth_1pct_usd: PROFILE(h), spread_bps: 0.2, volume_usd_10m: 1e6 })) };
     case "crowding": return { coin, step_min: 10, rows: ts.map((t) => ({ t, ratio: 9 })), latest: { t: ts.at(-1), ratio: 9.5, percentile: 80 }, p10: 9, p50: 9.2, p90: 9.6 };
-    case "liqmap": return { coin, t: NOW, mark: 100, accounts: 1500,
+    case "liqmap": if (coin === "DOGE") return { __status: 404, error: "No whale snapshot yet" };
+      return { coin, t: NOW, mark: 100, accounts: 1500,
       bands: { below: [{ from_pct: -2, to_pct: 0, usd: 500_000 }, { from_pct: -5, to_pct: -2, usd: 700_000 }, { from_pct: -10, to_pct: -5, usd: 1 }],
                above: [{ from_pct: 0, to_pct: 2, usd: 300_000 }, { from_pct: 2, to_pct: 5, usd: 400_000 }, { from_pct: 5, to_pct: 10, usd: 1 }] }, map: [] };
     case "history": return { coin, step_min: 60, recording_since: SINCE,
       fields: ["t", "mark", "oracle", "funding", "oi", "bid_0.5", "ask_0.5", "bid_1", "ask_1", "bid_2", "ask_2"],
-      rows: ts.map((t, i) => [t, 100 + i, 100 + i, 1e-5, 1000 + 2 * i, 1, 1, 1_000_000, 1_000_000, 1, 1]) };
-    case "ranges": return { coin, as_of: new Date(NOW).toISOString(), source: "Hyperliquid daily close", window_days: +q.get("window"), samples: 700,
+      rows: ts.map((t, i) => [t, 100 + i, 100 + i, 1e-5, 1000 + 2 * i, 1, 1, Math.floor(i / 24) % 2 ? null : 1_000_000, Math.floor(i / 24) % 2 ? null : 1_000_000, 1, 1]) };
+    case "ranges": if (coin === "XRP" && q.get("window") === "30") return { __status: 502, error: "Upstream data is unavailable right now." };
+      return { coin, as_of: new Date(NOW).toISOString(), source: "Hyperliquid daily close", window_days: +q.get("window"), samples: 700,
       latest: 0.08, latest_percentile: 93, p10: -0.06, p25: -0.03, p50: 0, p75: 0.03, p90: 0.07 };
     case "implied": return { coin, summary: { implied_annual_pct: 50, implied_percentile: 40, implied_since: "2021-04-01", realized_annual_pct: { "30d": 40 }, ratio_implied_to_realized_30d: 1.25 }, fields: ["t", "iv"], rows: [] };
     case "funding": return q.get("venue") === "binance"
-      ? { coin, venue: "binance", interval_hours: 8, fields: ["t", "rate", "premium"], rows: hourly(from, to, 480).map((t) => [t, 8e-5, null]), summary: { latest_hourly: 1e-5, samples: 10 } }
+      ? { coin, venue: "binance", interval_hours: 8, fields: ["t", "rate_per_8h", "premium"], rows: hourly(from, to, 480).map((t) => [t, 8e-5, null]), summary: { latest_hourly: 1e-5, samples: 10 } }
       : { coin, fields: ["t", "rate", "premium"], rows: ts.map((t, i) => [t, i >= ts.length - 5 ? 1e-5 : -1e-5, 0]), summary: { latest_hourly: 1e-5, latest_percentile: 60, samples: 100 } };
     case "venues": return { coin, step_min: 60, rows: ts.map((t) => ({ t, hyperliquid: { funding: 1e-5 }, binance: { funding: 1.6e-4 }, bybit: { funding: 4e-5 }, okx: { funding: 8e-5 },
       predicted_funding: { BinPerp: [1.6e-4, 8], HlPerp: [1e-5, 1] } })) };
@@ -38,7 +40,7 @@ function api(path, q) {
     case "whales": return { coin, step_min: 60, accounts: 1500, rows: ts.map((t, i) => ({ t, long_usd: 1000 + 10 * i, short_usd: 1000, net_usd: 10 * i, n_long: 1, n_short: 1, avg_leverage: 5, mark: 100, hlp_net_usd: 0 })) };
     case "draw": return coin
       ? { coin, t: NOW, draw: 45, band: "Hand on hilt", components: { vol: 50 }, inputs: { realized_vol_7d_pct: 20 }, history: ts.map((t) => [t, 45]), history_step_min: 60 }
-      : { coin: "MARKET", t: NOW, draw: 30, band: "Resting", weights: { BTC: 0.5 }, markets: Object.fromEntries(CORE.map((c, i) => [c, { draw: [40, 20, 50, 10, 5, 5, 5, 5][i], band: "x" }])),
+      : { coin: "MARKET", t: NOW, draw: 30, band: "Resting", weights: { BTC: 0.5 }, markets: Object.fromEntries(CORE.map((c, i) => [c, c === "SUI" ? null : { draw: [40, 20, 50, 10, 5, 5, 5, 5][i], band: "x" }])),
           history: ts.map((t, i) => [t, i === 0 ? 25 : 30]), history_step_min: 60 };
     case "positioning": return { coin, venue: "binance", step_min: 5, rows: ts.map((t) => ({ t, oi: {} })) };
     case "basis": return { coin: "HYPE", step_min: 60, rows: ts.map((t) => ({ t, basis_bps: 3 })) };
@@ -54,8 +56,10 @@ const fake = http.createServer((req, res) => {
   const u = new URL(req.url, "http://x");
   if (req.headers.authorization !== "Bearer test-key") { res.writeHead(401); return res.end("{}"); }
   hits++;
+  if (u.pathname === "/v1/depth/xyz:HTML") { res.writeHead(200, { "content-type": "text/html" }); return res.end("<html>captive portal</html>"); }
   const body = api(decodeURIComponent(u.pathname), u.searchParams);
-  res.writeHead(body ? 200 : 404, { "content-type": "application/json" }); res.end(JSON.stringify(body ?? { error: "not found" }));
+  const status = body?.__status ?? (body ? 200 : 404);
+  res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(body ?? { error: "not found" }));
 });
 await new Promise((r) => fake.listen(0, "127.0.0.1", r));
 const BASE = `http://127.0.0.1:${fake.address().port}/v1`;
@@ -104,6 +108,7 @@ await check("book_check: beyond 2%, one side only", async () => {
 await check("book_check: HIP-3 makes 2 calls and says what it left out", async () => {
   const { out, calls } = await call("stray_book_check", { coin: "xyz:TEST" });
   assert.equal(calls, 2); assert.equal(out.api_calls, 2); assert.ok(out.omitted); assert.equal(out.usual_hour.median_usd_within_1pct, 2_000_000);
+  assert.ok(out.usual_hour.samples >= 1 && out.usual_hour.samples <= 4, `only rows with a book count (${out.usual_hour.samples})`);
 });
 await check("cache: a repeat profile read within 60 s costs no call", async () => {
   await call("stray_profile", { coin: "ETH" });
@@ -130,7 +135,8 @@ await check("funding: who pays, cost per $10k a day, hours on this sign", async 
   const { out } = await call("stray_funding", { coin: "BTC", hours: 24 });
   assert.equal(out.summary.longs_pay_shorts, true); assert.equal(out.summary.cost_per_10k_usd_per_day, 2.4); assert.equal(out.summary.hours_same_sign, 5);
   const b = (await call("stray_funding", { coin: "BTC", venue: "binance", hours: 48 })).out;
-  assert.equal(b.summary.hours_same_sign % 8, 0); assert.ok(b.summary.hours_same_sign_note);
+  assert.ok(Number.isFinite(b.summary.hours_same_sign) && b.summary.hours_same_sign > 0 && b.summary.hours_same_sign % 8 === 0, `hours_same_sign ${b.summary.hours_same_sign}`);
+  assert.ok(b.summary.settled_sum_window > 0); assert.equal(b.summary.window_last.hourly, 1e-5); assert.ok(b.summary.hours_same_sign_note);
 });
 await check("funding_venues: 8-hour rates put on the hourly scale", async () => {
   const { out } = await call("stray_funding_venues", { coin: "BTC" });
@@ -161,9 +167,15 @@ await check("unusual: windows outside the middle 80% are marked", async () => {
   const { out, calls } = await call("stray_unusual", { coin: "ETH", windows: [1, 7] });
   assert.equal(out.windows.length, 2); assert.equal(out.windows[0].inside_p10_p90, false); assert.ok(out.volatility); assert.equal(calls, 3);
 });
+await check("unusual: one failed window is reported, the others still answer", async () => {
+  const { out, err } = await call("stray_unusual", { coin: "XRP" });
+  assert.equal(err, null); assert.equal(out.windows.length, 3);
+  assert.match(out.windows.find((w) => w.window_days === 30).error, /502/); assert.ok(out.windows.find((w) => w.window_days === 7).p90 !== undefined);
+});
 await check("brief: ranked markets and the top breakdowns", async () => {
   const { out } = await call("stray_brief", { top: 2 });
   assert.deepEqual(out.ranked.slice(0, 2).map((r) => r.coin), ["HYPE", "BTC"]); assert.equal(out.breakdown.length, 2); assert.equal(out.market.change_24h, 5);
+  assert.deepEqual(out.missing, ["SUI"]); assert.equal(out.ranked.length, 7);
 });
 await check("end: a past window works; before the record and in the future are refused", async () => {
   const past = await call("stray_history", { coin: "BTC", hours: 6, end: new Date(NOW - 48 * HOUR).toISOString() });
@@ -172,6 +184,23 @@ await check("end: a past window works; before the record and in the future are r
   assert.match(before.err, /2026-11-10T23:08:00Z/);
   const future = await call("stray_flow", { coin: "BTC", end: new Date(NOW + 3 * HOUR).toISOString() });
   assert.match(future.err, /future/);
+});
+await check("names: a lowercase core market takes the core path; a dex prefix is lower-cased", async () => {
+  const { out } = await call("stray_book_check", { coin: "sol" });
+  assert.equal(out.coin, "SOL"); assert.equal(out.omitted, undefined); assert.ok(out.positions_per_book_dollar);
+  const d = await call("stray_depth", { coin: "XYZ:TEST" }); assert.equal(d.err, null); assert.equal(d.out.coin, "xyz:TEST");
+});
+await check("book_check: a missing liquidation map is reported, the rest still answers", async () => {
+  const { out, err } = await call("stray_book_check", { coin: "DOGE" });
+  assert.equal(err, null); assert.match(out.liquidations_within_5pct.error, /404/); assert.ok(out.usual_hour.median_usd_within_1pct);
+});
+await check("a 200 that isn't JSON is an error, not data", async () => {
+  const { err } = await call("stray_depth", { coin: "xyz:HTML" }); assert.match(err, /isn't JSON/);
+});
+await check("the Draw with a past end leaves out today's per-market readings", async () => {
+  const { out } = await call("stray_draw", { end: new Date(NOW - 48 * HOUR).toISOString() });
+  assert.equal(out.markets, undefined); assert.ok(out.markets_note);
+  const now = await call("stray_draw", {}); assert.ok(now.out.markets);
 });
 await check("bad market names never reach the URL", async () => {
   const r = await client.callTool({ name: "stray_depth", arguments: { coin: "../keys" } });
@@ -200,6 +229,14 @@ await check("wording guard: no forecast language in descriptions or prompts", as
   }
 });
 
+await check("a key with a line break is refused without echoing it", async () => {
+  const bad = "stray_" + "a".repeat(20) + "\n" + "b".repeat(28);
+  const c2 = new Client({ name: "bad-key", version: "1" });
+  await c2.connect(new StdioClientTransport({ command: process.execPath, args: [new URL("./index.js", import.meta.url).pathname], env: { ...process.env, STRAY_BASE_URL: BASE, STRAY_API_KEY: bad } }));
+  const r = await c2.callTool({ name: "stray_markets", arguments: {} }); const t = r.content[0].text;
+  assert.equal(r.isError, true); assert.match(t, /space or line break/); assert.ok(!t.includes("aaaaaaaaaa")); await c2.close();
+});
+
 await client.close();
 fake.close();
-console.log(`\n${n} checks passed`);
+console.log(`\n${n} checks passed\nℹ pass ${n}\nℹ fail 0`);
