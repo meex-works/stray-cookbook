@@ -27,7 +27,8 @@
   "homepage": "https://stray.fi/docs",
   "scripts": {
     "start": "node index.js",
-    "test": "node test.mjs"
+    "test": "node test-offline.mjs",
+    "test:live": "node test.mjs"
   },
   "files": [
     "index.js",
